@@ -32,17 +32,30 @@ class FrontendTopology:
     Topology rules:
     - Single node OR multiple_frontends disabled: 1 frontend on head, no nginx
     - 2+ nodes AND multiple_frontends enabled: nginx on head, frontends on other nodes
+    - When num_additional_frontends exceeds available nodes, multiple frontends
+      are placed on the same node with ports starting at 8100.
     """
 
     nginx_node: str | None  # Node running nginx, or None if no nginx
     frontend_nodes: list[str]  # Nodes running frontends
     frontend_port: int  # Port frontends listen on
     public_port: int  # Public-facing port (nginx or direct frontend)
+    frontend_assignments: list[tuple[str, int]] | None = None  # (node, port) pairs when overflowing nodes
 
     @property
     def uses_nginx(self) -> bool:
         """Whether this topology uses nginx."""
         return self.nginx_node is not None
+
+    def get_assignments(self) -> list[tuple[str, int]]:
+        """Get (node, port) pairs for all frontends.
+
+        When frontend_assignments is set (overflow case), returns those.
+        Otherwise, returns one assignment per frontend_node at frontend_port.
+        """
+        if self.frontend_assignments is not None:
+            return self.frontend_assignments
+        return [(node, self.frontend_port) for node in self.frontend_nodes]
 
 
 class FrontendStageMixin:
@@ -95,26 +108,48 @@ class FrontendStageMixin:
         # Multiple nodes with multiple frontends enabled:
         # nginx on head, frontends on other nodes
         other_nodes = [n for n in nodes if n != head]
+        total_frontends = fe_config.num_additional_frontends + 1
 
-        # Limit number of frontends based on config (num_additional_frontends is extra beyond first)
-        max_frontends = min(
-            fe_config.num_additional_frontends + 1,
-            len(other_nodes),
-        )
-        frontend_nodes = other_nodes[:max_frontends]
+        if total_frontends <= len(other_nodes):
+            # Normal case: one frontend per node
+            frontend_nodes = other_nodes[:total_frontends]
+            logger.info(
+                "Frontend topology: nginx on %s, %d frontends on %s",
+                head,
+                len(frontend_nodes),
+                frontend_nodes,
+            )
+            return FrontendTopology(
+                nginx_node=head,
+                frontend_nodes=frontend_nodes,
+                frontend_port=8180,  # Internal port behind nginx
+                public_port=8000,  # Public port exposed by nginx
+            )
 
+        # Overflow case: more frontends than nodes, distribute round-robin with port 8100+
+        base_port = 8100
+        assignments: list[tuple[str, int]] = []
+        for i in range(total_frontends):
+            node = other_nodes[i % len(other_nodes)]
+            port = base_port + (i // len(other_nodes))
+            assignments.append((node, port))
+
+        unique_nodes = list(dict.fromkeys(node for node, _ in assignments))
         logger.info(
-            "Frontend topology: nginx on %s, %d frontends on %s",
+            "Frontend topology (overflow): nginx on %s, %d frontends across %d nodes %s (ports %d-%d)",
             head,
-            len(frontend_nodes),
-            frontend_nodes,
+            total_frontends,
+            len(unique_nodes),
+            unique_nodes,
+            base_port,
+            assignments[-1][1],
         )
-
         return FrontendTopology(
             nginx_node=head,
-            frontend_nodes=frontend_nodes,
-            frontend_port=8180,  # Internal port behind nginx
-            public_port=8000,  # Public port exposed by nginx
+            frontend_nodes=unique_nodes,
+            frontend_port=base_port,
+            public_port=8000,
+            frontend_assignments=assignments,
         )
 
     def _start_nginx(self, topology: FrontendTopology) -> ManagedProcess:
@@ -167,12 +202,11 @@ class FrontendStageMixin:
         env = Environment(loader=FileSystemLoader(str(template_dir)))
         template = env.get_template("nginx.conf.j2")
 
-        # Get IPs for frontend nodes
-        frontend_hosts = [get_hostname_ip(node) for node in topology.frontend_nodes]
+        # Build (host_ip, port) pairs for all frontend assignments
+        backend_servers = [(get_hostname_ip(node), port) for node, port in topology.get_assignments()]
 
         return template.render(
-            frontend_hosts=frontend_hosts,
-            backend_port=topology.frontend_port,
+            backend_servers=backend_servers,
             listen_port=topology.public_port,
         )
 

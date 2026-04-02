@@ -114,7 +114,10 @@ class TRTLLMProtocol:
 
     def get_served_model_name(self, default: str) -> str:
         """Get served model name from TRTLLM config, or return default."""
-        # TRTLLM doesn't have served-model-name in config, just use default
+        for env in [self.prefill_environment, self.decode_environment, self.aggregated_environment]:
+            name = env.get("DYN_TRTLLM_SERVED_MODEL_NAME")
+            if name:
+                return name
         return default
 
     def allocate_endpoints(
@@ -184,7 +187,7 @@ class TRTLLMProtocol:
             "--model-path",
             str(container_model_path),
             "--served-model-name",
-            runtime.model_path.name,
+            self.get_served_model_name(runtime.model_path.name),
         ]
 
         # Only add disaggregation mode for prefill/decode, not for agg

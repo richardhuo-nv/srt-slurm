@@ -7,8 +7,8 @@ worker_processes auto;
 http {
     access_log off;
     upstream backend_servers {
-        {% for frontend_host in frontend_hosts %}
-        server {{ frontend_host }}:{{ backend_port | default(8000) }};
+        {% for host, port in backend_servers %}
+        server {{ host }}:{{ port }};
         {% endfor %}
     }
 

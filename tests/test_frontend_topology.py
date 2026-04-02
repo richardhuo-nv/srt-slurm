@@ -109,7 +109,7 @@ class TestComputeFrontendTopology:
 
     def test_two_nodes_with_nginx(self):
         """2 nodes + enable_multiple_frontends: nginx on head, 1 frontend on node1."""
-        config = make_config(enable_multiple_frontends=True)
+        config = make_config(enable_multiple_frontends=True, num_additional_frontends=0)
         runtime = make_runtime(["node0", "node1"])
 
         orchestrator = SweepOrchestrator(config=config, runtime=runtime)
@@ -123,7 +123,7 @@ class TestComputeFrontendTopology:
 
     def test_three_nodes_with_nginx(self):
         """3 nodes + enable_multiple_frontends: nginx on head, frontends on node1 and node2."""
-        config = make_config(enable_multiple_frontends=True)
+        config = make_config(enable_multiple_frontends=True, num_additional_frontends=1)
         runtime = make_runtime(["node0", "node1", "node2"])
 
         orchestrator = SweepOrchestrator(config=config, runtime=runtime)
@@ -161,16 +161,45 @@ class TestComputeFrontendTopology:
         assert len(topology.frontend_nodes) == 2
 
     def test_frontend_count_limited_by_available_nodes(self):
-        """Frontend count limited by available nodes when fewer than config allows."""
+        """When frontends exceed nodes, overflow assigns multiple per node with port 8100+."""
         config = make_config(enable_multiple_frontends=True, num_additional_frontends=100)
         runtime = make_runtime(["node0", "node1", "node2"])
 
         orchestrator = SweepOrchestrator(config=config, runtime=runtime)
         topology = orchestrator._compute_frontend_topology()
 
-        # Only 2 nodes available for frontends (node1, node2)
+        # Overflow: 101 frontends across 2 nodes, should use frontend_assignments
+        assert topology.nginx_node == "node0"
+        assert topology.frontend_assignments is not None
+        assert len(topology.frontend_assignments) == 101
+        # First two assignments on different nodes at port 8100
+        assert topology.frontend_assignments[0] == ("node1", 8100)
+        assert topology.frontend_assignments[1] == ("node2", 8100)
+        # Next round at port 8101
+        assert topology.frontend_assignments[2] == ("node1", 8101)
+        assert topology.frontend_assignments[3] == ("node2", 8101)
+
+    def test_overflow_frontends_round_robin(self):
+        """Overflow case: 5 frontends on 2 nodes distributes round-robin with incrementing ports."""
+        config = make_config(enable_multiple_frontends=True, num_additional_frontends=4)
+        runtime = make_runtime(["node0", "node1", "node2"])
+
+        orchestrator = SweepOrchestrator(config=config, runtime=runtime)
+        topology = orchestrator._compute_frontend_topology()
+
+        # 5 frontends across 2 other_nodes
+        assert topology.nginx_node == "node0"
+        assert topology.frontend_assignments is not None
+        assert len(topology.frontend_assignments) == 5
+        assert topology.frontend_assignments == [
+            ("node1", 8100),
+            ("node2", 8100),
+            ("node1", 8101),
+            ("node2", 8101),
+            ("node1", 8102),
+        ]
+        # Unique nodes preserved
         assert topology.frontend_nodes == ["node1", "node2"]
-        assert len(topology.frontend_nodes) == 2
 
 
 class TestNginxConfigGeneration:
@@ -216,6 +245,33 @@ class TestNginxConfigGeneration:
         assert "server 10.0.0.1:8180" in nginx_config
         assert "server 10.0.0.2:8180" in nginx_config
         assert "server 10.0.0.3:8180" in nginx_config
+        assert "listen 8000" in nginx_config
+
+    def test_nginx_config_overflow_frontends(self):
+        """Nginx config with overflow frontends (multiple per node with different ports)."""
+        config = make_config(enable_multiple_frontends=True)
+        runtime = make_runtime(["node0", "node1", "node2"])
+
+        orchestrator = SweepOrchestrator(config=config, runtime=runtime)
+        topology = FrontendTopology(
+            nginx_node="node0",
+            frontend_nodes=["node1", "node2"],
+            frontend_port=8100,
+            public_port=8000,
+            frontend_assignments=[
+                ("node1", 8100),
+                ("node2", 8100),
+                ("node1", 8101),
+            ],
+        )
+
+        with patch("srtctl.cli.mixins.frontend_stage.get_hostname_ip", side_effect=lambda x: f"10.0.0.{x[-1]}"):
+            nginx_config = orchestrator._generate_nginx_config(topology)
+
+        # All assignments with their specific ports
+        assert "server 10.0.0.1:8100" in nginx_config
+        assert "server 10.0.0.2:8100" in nginx_config
+        assert "server 10.0.0.1:8101" in nginx_config
         assert "listen 8000" in nginx_config
 
 
@@ -266,7 +322,7 @@ class TestStartFrontendIntegration:
         mock_mixin_srun.return_value = MagicMock()
         mock_dynamo_srun.return_value = MagicMock()
 
-        config = make_config(enable_multiple_frontends=True, frontend_type="dynamo")
+        config = make_config(enable_multiple_frontends=True, num_additional_frontends=1, frontend_type="dynamo")
         runtime = make_runtime(["node0", "node1", "node2"])
         # Use tmp_path for log_dir so nginx config can be written
         runtime = RuntimeContext(
