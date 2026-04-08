@@ -2,7 +2,7 @@ name: ctx1dep4_gen5tep4_batch4_eplb0_mtp0
 
 model:
   path: /lustre/fsw/core_dlfw_ci/rihuo/nvidia_Kimi-K2.5-NVFP4
-  container: /lustre/fsw/core_dlfw_ci/rihuo/dynamo-trtllm-arm64-47693724.sqsh
+  container: /lustre/fsw/core_dlfw_ci/rihuo/dynamo-trtllm-arm64-48028352.sqsh
   precision: fp4
 
 resources:
