@@ -19,16 +19,22 @@ backend:
   type: trtllm
 
   prefill_environment:
+    TLLM_LOG_LEVEL: "INFO"
     TRTLLM_SERVER_DISABLE_GC: "1"
     TRTLLM_WORKER_DISABLE_GC: "1"
     NCCL_GRAPH_MIXING_SUPPORT: "0"
     TRTLLM_ENABLE_PDL: "1"
+    ENROOT_ALLOW_DEV: "yes"
+    MIMALLOC_PURGE_DELAY: "0"
 
   decode_environment:
+    TLLM_LOG_LEVEL: "INFO"
     TRTLLM_SERVER_DISABLE_GC: "1"
     TRTLLM_WORKER_DISABLE_GC: "1"
     NCCL_GRAPH_MIXING_SUPPORT: "0"
     TRTLLM_ENABLE_PDL: "1"
+    ENROOT_ALLOW_DEV: "yes"
+    MIMALLOC_PURGE_DELAY: "0"
 
   trtllm_config:
     prefill:
