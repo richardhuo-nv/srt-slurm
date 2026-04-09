@@ -2,7 +2,7 @@ name: "ctx1dep4_gen5tep4_batch1_eplb0_mtp3"
 
 model:
   path: "/lustre/fsw/core_dlfw_ci/rihuo/nvidia_GLM-5-NVFP4"
-  container: "/lustre/fsw/core_dlfw_ci/rihuo/dynamo-trtllm-glm-2-0.sqsh"
+  container: "/lustre/fsw/core_dlfw_ci/rihuo/dynamo-trtllm-arm64-48156767.sqsh"
   precision: "fp4"
 
 resources:
